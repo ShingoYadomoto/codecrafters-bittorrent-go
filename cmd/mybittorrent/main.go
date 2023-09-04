@@ -13,6 +13,8 @@ import (
 // Example:
 // - 5:hello -> hello
 // - 10:hello12345 -> hello12345
+// - i52e -> 52
+// - i-52e -> -52
 func decodeBencode(bencodedString string) (interface{}, error) {
 	if unicode.IsDigit(rune(bencodedString[0])) {
 		// string case
@@ -43,7 +45,7 @@ func decodeBencode(bencodedString string) (interface{}, error) {
 
 		return num, nil
 	} else {
-		return "", fmt.Errorf("Only strings are supported at the moment")
+		return "", fmt.Errorf("only strings, integer are supported at the moment")
 	}
 }
 
