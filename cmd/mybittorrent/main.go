@@ -16,6 +16,7 @@ import (
 // - i52e -> 52
 // - i-52e -> -52
 // - l5:helloi52ee -> [“hello”,52]
+// - d3:foo3:bar5:helloi52ee -> {"hello": 52, "foo": "bar"}
 func decodeBencode(bencodedString string) (interface{}, int, error) {
 	if unicode.IsDigit(rune(bencodedString[0])) {
 		// string case
@@ -65,6 +66,34 @@ func decodeBencode(bencodedString string) (interface{}, int, error) {
 				return "", 0, err
 			}
 			ret = append(ret, decoded)
+
+			in = in[nextIndex:]
+
+			if in == "" {
+				break
+			}
+		}
+
+		return ret, 0, nil
+	} else if strings.HasPrefix(bencodedString, "d") {
+		// dictionary case
+		in := strings.TrimSuffix(strings.TrimPrefix(bencodedString, "d"), "e")
+
+		var (
+			ret = map[interface{}]interface{}{}
+			key interface{}
+		)
+		for {
+			decoded, nextIndex, err := decodeBencode(in)
+			if err != nil {
+				return "", 0, err
+			}
+			if key == nil {
+				key = decoded
+			} else {
+				ret[key] = decoded
+				key = nil
+			}
 
 			in = in[nextIndex:]
 
