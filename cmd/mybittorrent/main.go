@@ -16,7 +16,7 @@ import (
 // - i52e -> 52
 // - i-52e -> -52
 // - l5:helloi52ee -> [“hello”,52]
-func decodeBencode(bencodedString string) (interface{}, error) {
+func decodeBencode(bencodedString string) (interface{}, int, error) {
 	if unicode.IsDigit(rune(bencodedString[0])) {
 		// string case
 		var firstColonIndex int
@@ -32,10 +32,11 @@ func decodeBencode(bencodedString string) (interface{}, error) {
 
 		length, err := strconv.Atoi(lengthStr)
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
 
-		return bencodedString[firstColonIndex+1 : firstColonIndex+1+length], nil
+		untilIndex := firstColonIndex + 1 + length
+		return bencodedString[firstColonIndex+1 : untilIndex], untilIndex, nil
 	} else if strings.HasPrefix(bencodedString, "i") {
 		// integers case
 		var endIndex int
@@ -49,12 +50,32 @@ func decodeBencode(bencodedString string) (interface{}, error) {
 
 		num, err := strconv.Atoi(bencodedString[1:endIndex])
 		if err != nil {
-			return "", err
+			return "", 0, err
 		}
 
-		return num, nil
+		return num, endIndex + 1, nil
+	} else if strings.HasPrefix(bencodedString, "l") {
+		// list case
+		in := strings.TrimSuffix(strings.TrimPrefix(bencodedString, "l"), "e")
+
+		ret := []interface{}{}
+		for {
+			decoded, nextIndex, err := decodeBencode(in)
+			if err != nil {
+				return "", 0, err
+			}
+			ret = append(ret, decoded)
+
+			in = in[nextIndex:]
+
+			if in == "" {
+				break
+			}
+		}
+
+		return ret, 0, nil
 	} else {
-		return "", fmt.Errorf("only strings, integer are supported at the moment")
+		return "", 0, fmt.Errorf("only strings, integer are supported at the moment")
 	}
 }
 
@@ -64,7 +85,7 @@ func main() {
 	if command == "decode" {
 		bencodedValue := os.Args[2]
 
-		decoded, err := decodeBencode(bencodedValue)
+		decoded, _, err := decodeBencode(bencodedValue)
 		if err != nil {
 			fmt.Println(err)
 			return
