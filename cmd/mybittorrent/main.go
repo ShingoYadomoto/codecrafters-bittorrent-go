@@ -116,25 +116,24 @@ func decodeBencode(bencodedString string) (interface{}, int, error) {
 	}
 }
 
-func decodeTorrentFile(filepath string) error {
+func decodeTorrentFile(filepath string) (map[string]interface{}, error) {
 	f, err := os.Open(filepath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer f.Close()
 
 	content, err := io.ReadAll(f)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	decoded, _, err := decodeBencode(string(content))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	fmt.Println(decoded)
 
-	return nil
+	return decoded.(map[string]interface{}), nil
 }
 
 func main() {
@@ -155,11 +154,14 @@ func main() {
 	case "info":
 		torrentFilepath := os.Args[2]
 
-		err := decodeTorrentFile(torrentFilepath)
+		decoded, err := decodeTorrentFile(torrentFilepath)
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
+		fmt.Printf("Tracker URL: %s\n", decoded["announce"])
+		fmt.Printf("Length: %d\n", decoded["info"].(map[string]interface{})["length"])
+
 	default:
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
