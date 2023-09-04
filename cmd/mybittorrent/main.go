@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -58,9 +59,12 @@ func decodeBencode(bencodedString string) (interface{}, int, error) {
 		return num, endIndex + 1, nil
 	} else if strings.HasPrefix(bencodedString, "l") {
 		// list case
-		in := strings.TrimSuffix(strings.TrimPrefix(bencodedString, "l"), "e")
+		in := strings.TrimPrefix(bencodedString, "l")
 
-		ret := []interface{}{}
+		var (
+			ret        = []interface{}{}
+			untilIndex int
+		)
 		for {
 			decoded, nextIndex, err := decodeBencode(in)
 			if err != nil {
@@ -69,20 +73,22 @@ func decodeBencode(bencodedString string) (interface{}, int, error) {
 			ret = append(ret, decoded)
 
 			in = in[nextIndex:]
+			untilIndex += nextIndex
 
-			if in == "" {
+			if in[0] == 'e' {
 				break
 			}
 		}
 
-		return ret, 0, nil
+		return ret, untilIndex + 1, nil
 	} else if strings.HasPrefix(bencodedString, "d") {
 		// dictionary case
-		in := strings.TrimSuffix(strings.TrimPrefix(bencodedString, "d"), "e")
+		in := strings.TrimPrefix(bencodedString, "d")
 
 		var (
-			ret = map[string]interface{}{}
-			key string
+			ret        = map[string]interface{}{}
+			key        string
+			untilIndex int
 		)
 		for {
 			decoded, nextIndex, err := decodeBencode(in)
@@ -97,16 +103,37 @@ func decodeBencode(bencodedString string) (interface{}, int, error) {
 			}
 
 			in = in[nextIndex:]
+			untilIndex += nextIndex
 
-			if in == "" {
+			if in[0] == 'e' {
 				break
 			}
 		}
 
-		return ret, 0, nil
+		return ret, untilIndex + 1, nil
 	} else {
 		return "", 0, fmt.Errorf("only strings, integer are supported at the moment")
 	}
+}
+
+func decodeTorrentFile(filepath string) (map[string]interface{}, error) {
+	f, err := os.Open(filepath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	content, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+
+	decoded, _, err := decodeBencode(string(content))
+	if err != nil {
+		return nil, err
+	}
+
+	return decoded.(map[string]interface{}), nil
 }
 
 func main() {
@@ -125,6 +152,15 @@ func main() {
 		jsonOutput, _ := json.Marshal(decoded)
 		fmt.Println(string(jsonOutput))
 	case "info":
+		torrentFilepath := os.Args[2]
+
+		decoded, err := decodeTorrentFile(torrentFilepath)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fmt.Printf("Tracker URL: %s\n", decoded["announce"])
+		fmt.Printf("Length: %d\n", decoded["info"].(map[string]interface{})["length"])
 
 	default:
 		fmt.Println("Unknown command: " + command)
