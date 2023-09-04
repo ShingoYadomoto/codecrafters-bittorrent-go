@@ -15,6 +15,7 @@ import (
 // - 10:hello12345 -> hello12345
 // - i52e -> 52
 // - i-52e -> -52
+// - l5:helloi52ee -> [“hello”,52]
 func decodeBencode(bencodedString string) (interface{}, error) {
 	if unicode.IsDigit(rune(bencodedString[0])) {
 		// string case
@@ -35,10 +36,18 @@ func decodeBencode(bencodedString string) (interface{}, error) {
 		}
 
 		return bencodedString[firstColonIndex+1 : firstColonIndex+1+length], nil
-	} else if strings.HasPrefix(bencodedString, "i") && strings.HasSuffix(bencodedString, "e") {
+	} else if strings.HasPrefix(bencodedString, "i") {
 		// integers case
-		trimmed := strings.TrimSuffix(strings.TrimPrefix(bencodedString, "i"), "e")
-		num, err := strconv.Atoi(trimmed)
+		var endIndex int
+
+		for i := 0; i < len(bencodedString); i++ {
+			if bencodedString[i] == 'e' {
+				endIndex = i
+				break
+			}
+		}
+
+		num, err := strconv.Atoi(bencodedString[1:endIndex])
 		if err != nil {
 			return "", err
 		}
