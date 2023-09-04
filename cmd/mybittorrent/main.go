@@ -112,7 +112,8 @@ func decodeBencode(bencodedString string) (interface{}, int, error) {
 func main() {
 	command := os.Args[1]
 
-	if command == "decode" {
+	switch command {
+	case "decode":
 		bencodedValue := os.Args[2]
 
 		decoded, _, err := decodeBencode(bencodedValue)
@@ -123,7 +124,9 @@ func main() {
 
 		jsonOutput, _ := json.Marshal(decoded)
 		fmt.Println(string(jsonOutput))
-	} else {
+	case "info":
+
+	default:
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
 	}
