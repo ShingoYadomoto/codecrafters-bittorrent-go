@@ -219,6 +219,19 @@ func main() {
 			return
 		}
 		fmt.Printf("Info Hash: %x\n", sha1.Sum([]byte(bencoded)))
+		fmt.Printf("Piece Length: %d\n", metaInfo["piece length"])
+
+		const eachPieceSize = 20
+
+		var (
+			pieceStr  = metaInfo["pieces"].(string)
+			pieceHash = ""
+		)
+		for i := 0; i < len(pieceStr); i += eachPieceSize {
+			pieceHash += fmt.Sprintf("%x\n", pieceStr[i:i+eachPieceSize])
+		}
+
+		fmt.Printf("Piece Hashes: \n%s", pieceHash)
 	default:
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
