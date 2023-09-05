@@ -2,10 +2,14 @@ package main
 
 import (
 	"crypto/sha1"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -185,6 +189,72 @@ func bencode(i interface{}) (string, error) {
 	return "", errors.New("unexpected type")
 }
 
+type Info struct {
+	TrackerURL  string
+	Length      int
+	InfoHash    [sha1.Size]byte
+	PieceLength int
+	PieceHashes string
+}
+
+const eachPieceSize = 20
+
+func parseToInfo(torrentFilepath string) (*Info, error) {
+	decoded, err := decodeTorrentFile(torrentFilepath)
+	if err != nil {
+		return nil, err
+	}
+
+	metaInfo := decoded["info"].(map[string]interface{})
+
+	info := &Info{
+		TrackerURL:  decoded["announce"].(string),
+		Length:      metaInfo["length"].(int),
+		PieceLength: metaInfo["piece length"].(int),
+	}
+
+	bencoded, err := bencode(metaInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	info.InfoHash = sha1.Sum([]byte(bencoded))
+
+	pieceStr := metaInfo["pieces"].(string)
+	for i := 0; i < len(pieceStr); i += eachPieceSize {
+		info.PieceHashes += fmt.Sprintf("%x\n", pieceStr[i:i+eachPieceSize])
+	}
+
+	return info, nil
+}
+
+func requestToTracker(torrentFilepath string) (*http.Response, error) {
+	info, err := parseToInfo(torrentFilepath)
+	if err != nil {
+		return nil, err
+	}
+
+	u, err := url.Parse(info.TrackerURL)
+	if err != nil {
+		return nil, err
+	}
+
+	q := u.Query()
+	q.Add("info_hash", string(info.InfoHash[:]))
+	q.Add("peer_id", "00112233445566778899")
+	q.Add("port", "6881")
+	q.Add("uploaded", "0")
+	q.Add("downloaded", "0")
+	q.Add("left", fmt.Sprint(info.Length))
+	q.Add("compact", "1")
+
+	u.RawQuery = q.Encode()
+
+	to := u.String()
+
+	return http.Get(to)
+}
+
 func main() {
 	command := os.Args[1]
 
@@ -203,35 +273,45 @@ func main() {
 	case "info":
 		torrentFilepath := os.Args[2]
 
-		decoded, err := decodeTorrentFile(torrentFilepath)
+		info, err := parseToInfo(torrentFilepath)
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
 
-		metaInfo := decoded["info"].(map[string]interface{})
-		fmt.Printf("Tracker URL: %s\n", decoded["announce"])
-		fmt.Printf("Length: %d\n", metaInfo["length"])
+		fmt.Printf("Tracker URL: %s\n", info.TrackerURL)
+		fmt.Printf("Length: %d\n", info.Length)
+		fmt.Printf("Info Hash: %x\n", info.InfoHash)
+		fmt.Printf("Piece Length: %d\n", info.PieceLength)
+		fmt.Printf("Piece Hashes: \n%s", info.PieceHashes)
+	case "peers":
+		torrentFilepath := os.Args[2]
 
-		bencoded, err := bencode(metaInfo)
+		res, err := requestToTracker(torrentFilepath)
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
-		fmt.Printf("Info Hash: %x\n", sha1.Sum([]byte(bencoded)))
-		fmt.Printf("Piece Length: %d\n", metaInfo["piece length"])
+		defer res.Body.Close()
 
-		const eachPieceSize = 20
-
-		var (
-			pieceStr  = metaInfo["pieces"].(string)
-			pieceHash = ""
-		)
-		for i := 0; i < len(pieceStr); i += eachPieceSize {
-			pieceHash += fmt.Sprintf("%x\n", pieceStr[i:i+eachPieceSize])
+		b, err := io.ReadAll(res.Body)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		decoded, _, err := decodeBencode(string(b))
+		if err != nil {
+			fmt.Println(err)
+			return
 		}
 
-		fmt.Printf("Piece Hashes: \n%s", pieceHash)
+		const eachPeerSize = 6
+		resPeer := decoded.(map[string]interface{})["peers"].(string)
+		for i := 0; i < len(resPeer); i += eachPeerSize {
+			ip := net.IP(resPeer[i : i+4])
+			port := binary.BigEndian.Uint16([]byte(resPeer[i+4 : i+6]))
+			fmt.Printf("%s:%d\n", ip, port)
+		}
 	default:
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
