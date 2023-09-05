@@ -119,7 +119,7 @@ func decodeBencode(bencodedString string) (interface{}, int, error) {
 
 		return ret, untilIndex + 1, nil
 	} else {
-		return "", 0, fmt.Errorf("only strings, integer are supported at the moment")
+		return "", 0, fmt.Errorf("unexpected format")
 	}
 }
 
@@ -312,6 +312,48 @@ func main() {
 			port := binary.BigEndian.Uint16([]byte(resPeer[i+4 : i+6]))
 			fmt.Printf("%s:%d\n", ip, port)
 		}
+	case "handshake":
+		var (
+			torrentFilepath = os.Args[2]
+			peer            = os.Args[3]
+		)
+
+		info, err := parseToInfo(torrentFilepath)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		const (
+			protocolStrLengthStr = string(byte(19))
+			protocolStr          = "BitTorrent protocol"
+			reservedBytesStr     = "00000000"
+			peerID               = "00112233445566778899"
+		)
+		infoHash := string(info.InfoHash[:])
+
+		conn, err := net.Dial("tcp", peer)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		defer conn.Close()
+
+		handshake := protocolStrLengthStr + protocolStr + reservedBytesStr + infoHash + peerID
+		_, err = conn.Write([]byte(handshake))
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		buf := make([]byte, len(handshake))
+		_, err = conn.Read(buf)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		fmt.Printf("Peer ID: %x\n", buf[len(handshake)-len(peerID):])
 	default:
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
