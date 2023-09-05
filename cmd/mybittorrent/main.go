@@ -1,10 +1,13 @@
 package main
 
 import (
+	"crypto/sha1"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -136,6 +139,52 @@ func decodeTorrentFile(filepath string) (map[string]interface{}, error) {
 	return decoded.(map[string]interface{}), nil
 }
 
+func bencode(i interface{}) (string, error) {
+	switch i.(type) {
+	case string:
+		str := i.(string)
+		return fmt.Sprintf("%d:%s", len(str), str), nil
+	case int:
+		num := i.(int)
+		return fmt.Sprintf("i%de", num), nil
+	case []interface{}:
+		joined := ""
+		for _, item := range i.([]interface{}) {
+			bencoded, err := bencode(item)
+			if err != nil {
+				return "", err
+			}
+			joined += bencoded
+		}
+		return fmt.Sprintf("l%se", joined), nil
+	case map[string]interface{}:
+		var (
+			m    = i.(map[string]interface{})
+			keys = make([]string, 0, len(m))
+		)
+		for key := range m {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+
+		joined := ""
+		for _, key := range keys {
+			bencodedKey, err := bencode(key)
+			if err != nil {
+				return "", err
+			}
+			bencodedValue, err := bencode(m[key])
+			if err != nil {
+				return "", err
+			}
+			joined = joined + bencodedKey + bencodedValue
+		}
+		return fmt.Sprintf("d%se", joined), nil
+	}
+
+	return "", errors.New("unexpected type")
+}
+
 func main() {
 	command := os.Args[1]
 
@@ -159,9 +208,17 @@ func main() {
 			fmt.Println(err)
 			return
 		}
-		fmt.Printf("Tracker URL: %s\n", decoded["announce"])
-		fmt.Printf("Length: %d\n", decoded["info"].(map[string]interface{})["length"])
 
+		metaInfo := decoded["info"].(map[string]interface{})
+		fmt.Printf("Tracker URL: %s\n", decoded["announce"])
+		fmt.Printf("Length: %d\n", metaInfo["length"])
+
+		bencoded, err := bencode(metaInfo)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fmt.Printf("Info Hash: %x\n", sha1.Sum([]byte(bencoded)))
 	default:
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
