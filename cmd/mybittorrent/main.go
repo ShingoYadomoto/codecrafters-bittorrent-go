@@ -329,11 +329,12 @@ const (
 	cancel           byte = 8
 )
 
+const (
+	messageLengthLen = 4
+	messageIDLen     = 1
+)
+
 func waitPeerMessage(conn net.Conn, expid byte) ([]byte, error) {
-	const (
-		messageLengthLen = 4
-		messageIDLen     = 1
-	)
 	messageLengthBuf := make([]byte, messageLengthLen)
 	_, err := conn.Read(messageLengthBuf)
 	if err != nil {
@@ -360,6 +361,26 @@ func waitPeerMessage(conn net.Conn, expid byte) ([]byte, error) {
 	}
 
 	return payloadBuf, nil
+}
+
+func sendPeerMessage(conn net.Conn, id byte, payload []byte) error {
+	buf := make([]byte, messageLengthLen+messageIDLen+len(payload))
+
+	// message length
+	binary.BigEndian.PutUint32(buf[:messageLengthLen], uint32(messageIDLen+len(payload)))
+
+	// message id
+	buf[messageLengthLen] = id
+
+	// payload
+	copy(buf[messageLengthLen+messageIDLen:], payload)
+
+	_, err := conn.Write(buf)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func main() {
@@ -457,14 +478,17 @@ func main() {
 			return
 		}
 
-		payload, err := waitPeerMessage(conn, bitfield)
+		_, err = waitPeerMessage(conn, bitfield)
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
-		fmt.Println("===DEBUG====")
-		fmt.Println(string(payload))
-		fmt.Println("===DEBUG====")
+
+		err = sendPeerMessage(conn, interested, nil)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
 	default:
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
