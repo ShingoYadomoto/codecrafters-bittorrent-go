@@ -317,6 +317,51 @@ func handshake(conn net.Conn, torrentFilepath string) ([]byte, error) {
 	return buf[len(handshake)-len(peerID):], nil
 }
 
+const (
+	choke            byte = 0
+	unchoke          byte = 1
+	interested       byte = 2
+	notInterestedNot byte = 3
+	have             byte = 4
+	bitfield         byte = 5
+	request          byte = 6
+	piece            byte = 7
+	cancel           byte = 8
+)
+
+func waitPeerMessage(conn net.Conn, expid byte) ([]byte, error) {
+	const (
+		messageLengthLen = 4
+		messageIDLen     = 1
+	)
+	messageLengthBuf := make([]byte, messageLengthLen)
+	_, err := conn.Read(messageLengthBuf)
+	if err != nil {
+		return nil, err
+	}
+
+	messageIDBuf := make([]byte, messageIDLen)
+	_, err = conn.Read(messageIDBuf)
+	if err != nil {
+		return nil, err
+	}
+
+	if messageIDBuf[0] != expid {
+		return nil, fmt.Errorf("unexpected message id. got: %d, expected: %d", messageIDBuf[0], expid)
+	}
+
+	var (
+		messageLength = binary.BigEndian.Uint32(messageLengthBuf)
+		payloadBuf    = make([]byte, messageLength)
+	)
+	_, err = conn.Read(payloadBuf)
+	if err != nil {
+		return nil, err
+	}
+
+	return payloadBuf, nil
+}
+
 func main() {
 	command := os.Args[1]
 
@@ -378,6 +423,48 @@ func main() {
 		}
 
 		fmt.Printf("Peer ID: %x\n", string(buf))
+	case "download_piece":
+		var (
+			//outputFilepath  string
+			torrentFilepath = os.Args[4]
+			//pieceIDStr      = os.Args[5]
+		)
+		//if os.Args[2] == "-o" {
+		//	outputFilepath = os.Args[3]
+		//}
+		//pieceID, err := strconv.Atoi(pieceIDStr)
+		//if err != nil {
+		//	fmt.Println(err)
+		//	return
+		//}
+
+		peers, err := getPeers(torrentFilepath)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		conn, err := net.Dial("tcp", peers[0])
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		defer conn.Close()
+
+		_, err = handshake(conn, torrentFilepath)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		payload, err := waitPeerMessage(conn, bitfield)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fmt.Println("===DEBUG====")
+		fmt.Println(string(payload))
+		fmt.Println("===DEBUG====")
 	default:
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
