@@ -73,6 +73,10 @@ func decodeBencode(bencodedString string) (interface{}, int, error) {
 			untilIndex int
 		)
 		for {
+			if in[0] == 'e' {
+				break
+			}
+
 			decoded, nextIndex, err := decodeBencode(in)
 			if err != nil {
 				return "", 0, err
@@ -81,10 +85,6 @@ func decodeBencode(bencodedString string) (interface{}, int, error) {
 
 			in = in[nextIndex:]
 			untilIndex += nextIndex
-
-			if in[0] == 'e' {
-				break
-			}
 		}
 
 		return ret, untilIndex + 1, nil
@@ -98,6 +98,10 @@ func decodeBencode(bencodedString string) (interface{}, int, error) {
 			untilIndex int
 		)
 		for {
+			if in[0] == 'e' {
+				break
+			}
+
 			decoded, nextIndex, err := decodeBencode(in)
 			if err != nil {
 				return "", 0, err
@@ -111,10 +115,6 @@ func decodeBencode(bencodedString string) (interface{}, int, error) {
 
 			in = in[nextIndex:]
 			untilIndex += nextIndex
-
-			if in[0] == 'e' {
-				break
-			}
 		}
 
 		return ret, untilIndex + 1, nil
@@ -255,6 +255,68 @@ func requestToTracker(torrentFilepath string) (*http.Response, error) {
 	return http.Get(to)
 }
 
+func getPeers(torrentFilepath string) ([]string, error) {
+	res, err := requestToTracker(torrentFilepath)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	b, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, err
+	}
+	decoded, _, err := decodeBencode(string(b))
+	if err != nil {
+		return nil, err
+	}
+
+	const eachPeerSize = 6
+
+	resPeer := decoded.(map[string]interface{})["peers"].(string)
+	if resPeer == "" {
+		return nil, errors.New("unexpected peers string")
+	}
+
+	ret := make([]string, 0, len(resPeer)/eachPeerSize)
+	for i := 0; i < len(resPeer); i += eachPeerSize {
+		ip := net.IP(resPeer[i : i+4])
+		port := binary.BigEndian.Uint16([]byte(resPeer[i+4 : i+6]))
+		ret = append(ret, fmt.Sprintf("%s:%d", ip, port))
+	}
+
+	return ret, nil
+}
+
+func handshake(conn net.Conn, torrentFilepath string) ([]byte, error) {
+	info, err := parseToInfo(torrentFilepath)
+	if err != nil {
+		return nil, err
+	}
+
+	const (
+		protocolStrLengthStr = string(byte(19))
+		protocolStr          = "BitTorrent protocol"
+		reservedBytesStr     = "00000000"
+		peerID               = "00112233445566778899"
+	)
+	infoHash := string(info.InfoHash[:])
+
+	handshake := protocolStrLengthStr + protocolStr + reservedBytesStr + infoHash + peerID
+	_, err = conn.Write([]byte(handshake))
+	if err != nil {
+		return nil, err
+	}
+
+	buf := make([]byte, len(handshake))
+	_, err = conn.Read(buf)
+	if err != nil {
+		return nil, err
+	}
+
+	return buf[len(handshake)-len(peerID):], nil
+}
+
 func main() {
 	command := os.Args[1]
 
@@ -287,50 +349,20 @@ func main() {
 	case "peers":
 		torrentFilepath := os.Args[2]
 
-		res, err := requestToTracker(torrentFilepath)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		defer res.Body.Close()
-
-		b, err := io.ReadAll(res.Body)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		decoded, _, err := decodeBencode(string(b))
+		peers, err := getPeers(torrentFilepath)
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
 
-		const eachPeerSize = 6
-		resPeer := decoded.(map[string]interface{})["peers"].(string)
-		for i := 0; i < len(resPeer); i += eachPeerSize {
-			ip := net.IP(resPeer[i : i+4])
-			port := binary.BigEndian.Uint16([]byte(resPeer[i+4 : i+6]))
-			fmt.Printf("%s:%d\n", ip, port)
+		for _, peer := range peers {
+			fmt.Println(peer)
 		}
 	case "handshake":
 		var (
 			torrentFilepath = os.Args[2]
 			peer            = os.Args[3]
 		)
-
-		info, err := parseToInfo(torrentFilepath)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-
-		const (
-			protocolStrLengthStr = string(byte(19))
-			protocolStr          = "BitTorrent protocol"
-			reservedBytesStr     = "00000000"
-			peerID               = "00112233445566778899"
-		)
-		infoHash := string(info.InfoHash[:])
 
 		conn, err := net.Dial("tcp", peer)
 		if err != nil {
@@ -339,21 +371,13 @@ func main() {
 		}
 		defer conn.Close()
 
-		handshake := protocolStrLengthStr + protocolStr + reservedBytesStr + infoHash + peerID
-		_, err = conn.Write([]byte(handshake))
+		buf, err := handshake(conn, torrentFilepath)
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
 
-		buf := make([]byte, len(handshake))
-		_, err = conn.Read(buf)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-
-		fmt.Printf("Peer ID: %x\n", buf[len(handshake)-len(peerID):])
+		fmt.Printf("Peer ID: %x\n", string(buf))
 	default:
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
