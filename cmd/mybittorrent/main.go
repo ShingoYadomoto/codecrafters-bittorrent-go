@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/binary"
 	"encoding/json"
@@ -318,15 +319,15 @@ func handshake(conn net.Conn, torrentFilepath string) ([]byte, error) {
 }
 
 const (
-	choke            byte = 0
-	unchoke          byte = 1
-	interested       byte = 2
-	notInterestedNot byte = 3
-	have             byte = 4
-	bitfield         byte = 5
-	request          byte = 6
-	piece            byte = 7
-	cancel           byte = 8
+	choke            = 0
+	unchoke          = 1
+	interested       = 2
+	notInterestedNot = 3
+	have             = 4
+	bitfield         = 5
+	request          = 6
+	piece            = 7
+	cancel           = 8
 )
 
 const (
@@ -335,32 +336,38 @@ const (
 )
 
 func waitPeerMessage(conn net.Conn, expid byte) ([]byte, error) {
-	messageLengthBuf := make([]byte, messageLengthLen)
-	_, err := conn.Read(messageLengthBuf)
-	if err != nil {
-		return nil, err
-	}
+	for {
+		messageLengthBuf := make([]byte, messageLengthLen)
+		_, err := conn.Read(messageLengthBuf)
+		if err != nil {
+			return nil, err
+		}
 
-	messageIDBuf := make([]byte, messageIDLen)
-	_, err = conn.Read(messageIDBuf)
-	if err != nil {
-		return nil, err
-	}
+		messageIDBuf := make([]byte, messageIDLen)
+		_, err = conn.Read(messageIDBuf)
+		if err != nil {
+			return nil, err
+		}
 
-	if messageIDBuf[0] != expid {
-		return nil, fmt.Errorf("unexpected message id. got: %d, expected: %d", messageIDBuf[0], expid)
-	}
+		var (
+			messageID     uint8
+			messageLength = binary.BigEndian.Uint32(messageLengthBuf)
+			payloadBuf    = make([]byte, messageLength-messageIDLen)
+		)
+		err = binary.Read(bytes.NewReader(messageIDBuf), binary.BigEndian, &messageID)
+		if err != nil {
+			return nil, err
+		}
 
-	var (
-		messageLength = binary.BigEndian.Uint32(messageLengthBuf)
-		payloadBuf    = make([]byte, messageLength)
-	)
-	_, err = conn.Read(payloadBuf)
-	if err != nil {
-		return nil, err
-	}
+		_, err = conn.Read(payloadBuf)
+		if err != nil {
+			return nil, err
+		}
 
-	return payloadBuf, nil
+		if messageID == expid {
+			return payloadBuf, nil
+		}
+	}
 }
 
 func sendPeerMessage(conn net.Conn, id byte, payload []byte) error {
@@ -448,16 +455,22 @@ func main() {
 		var (
 			//outputFilepath  string
 			torrentFilepath = os.Args[4]
-			//pieceIDStr      = os.Args[5]
+			pieceIdxStr     = os.Args[5]
 		)
 		//if os.Args[2] == "-o" {
 		//	outputFilepath = os.Args[3]
 		//}
-		//pieceID, err := strconv.Atoi(pieceIDStr)
-		//if err != nil {
-		//	fmt.Println(err)
-		//	return
-		//}
+		pieceIdx, err := strconv.Atoi(pieceIdxStr)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		info, err := parseToInfo(torrentFilepath)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
 
 		peers, err := getPeers(torrentFilepath)
 		if err != nil {
@@ -465,7 +478,7 @@ func main() {
 			return
 		}
 
-		conn, err := net.Dial("tcp", peers[0])
+		conn, err := net.Dial("tcp", peers[2])
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -484,11 +497,48 @@ func main() {
 			return
 		}
 
-		err = sendPeerMessage(conn, interested, nil)
+		err = sendPeerMessage(conn, interested, []byte{})
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
+
+		_, err = waitPeerMessage(conn, unchoke)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		const blockSize = 16 * 1024
+
+		offset := 0
+		for {
+			offset += blockSize
+
+			payload := make([]byte, 12)
+			binary.BigEndian.PutUint32(payload[0:4], uint32(pieceIdx))
+			binary.BigEndian.PutUint32(payload[4:8], uint32(offset))
+			binary.BigEndian.PutUint32(payload[8:], blockSize)
+
+			err = sendPeerMessage(conn, request, payload)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+
+			payload, err = waitPeerMessage(conn, piece)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+			fmt.Println("===========DEBUG===========")
+			fmt.Println(payload)
+
+			if offset >= info.PieceLength {
+				break
+			}
+		}
+
 	default:
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
