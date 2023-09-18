@@ -453,13 +453,13 @@ func main() {
 		fmt.Printf("Peer ID: %x\n", string(buf))
 	case "download_piece":
 		var (
-			//outputFilepath  string
+			outputFilepath  string
 			torrentFilepath = os.Args[4]
 			pieceIdxStr     = os.Args[5]
 		)
-		//if os.Args[2] == "-o" {
-		//	outputFilepath = os.Args[3]
-		//}
+		if os.Args[2] == "-o" {
+			outputFilepath = os.Args[3]
+		}
 		pieceIdx, err := strconv.Atoi(pieceIdxStr)
 		if err != nil {
 			fmt.Println(err)
@@ -478,7 +478,7 @@ func main() {
 			return
 		}
 
-		conn, err := net.Dial("tcp", peers[2])
+		conn, err := net.Dial("tcp", peers[1])
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -511,7 +511,7 @@ func main() {
 
 		const blockSize = 16 * 1024
 
-		offset := 0
+		offset, count := 0, 0
 		for {
 			offset += blockSize
 
@@ -526,19 +526,44 @@ func main() {
 				return
 			}
 
-			payload, err = waitPeerMessage(conn, piece)
+			if offset >= info.PieceLength {
+				break
+			}
+
+			count++
+		}
+
+		combinedBlock := make([]byte, info.PieceLength)
+		for i := 0; i < count; i++ {
+			payload, err := waitPeerMessage(conn, piece)
 			if err != nil {
 				fmt.Println(err)
 				return
 			}
-			fmt.Println("===========DEBUG===========")
-			fmt.Println(payload)
 
-			if offset >= info.PieceLength {
-				break
+			index := binary.BigEndian.Uint32(payload[0:4])
+			if index != uint32(pieceIdx) {
+				fmt.Printf("unexpected index. exp: %d, got: %d\n", pieceIdx, index)
+				return
 			}
+			begin := binary.BigEndian.Uint32(payload[4:8])
+			block := payload[8:]
+			copy(combinedBlock[begin:], block)
 		}
 
+		sum := sha1.Sum(combinedBlock)
+		sumStr := string(sum[:])
+		if sumStr != info.PieceHashes {
+			// ToDo: FIX combinedBlock hash is always invalid
+			fmt.Println("invalid piece hash")
+			return
+		}
+
+		err = os.WriteFile(outputFilepath, combinedBlock, os.ModePerm)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
 	default:
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
